@@ -4,7 +4,7 @@
 #include <bits/stdc++.h>
 
 constexpr int64_t BLOCK_SIZE(256);
-constexpr int64_t BUFFER_NUM(1);
+constexpr int64_t BUFFER_NUM(2);
 
 namespace optiling {
 static ge::graphStatus TilingFunc(gert::TilingContext *context) {

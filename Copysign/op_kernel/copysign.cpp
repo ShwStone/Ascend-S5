@@ -1,7 +1,7 @@
 #include "kernel_operator.h"
 using namespace AscendC;
 
-constexpr int64_t BUFFER_NUM(1);
+constexpr int64_t BUFFER_NUM(2);
 
 template <class T> class KernelCopysign {
 
