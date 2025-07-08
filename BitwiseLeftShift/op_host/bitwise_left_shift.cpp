@@ -58,8 +58,8 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
 
     int64_t ub_per_length[ge::DataType::DT_MAX];
     ub_per_length[ge::DataType::DT_INT8] = (1 * 3 + 2 * 2 + 1);
-    ub_per_length[ge::DataType::DT_INT16] = (2 * 3 + 1);
-    ub_per_length[ge::DataType::DT_INT32] = (4 * 3 + 1);
+    ub_per_length[ge::DataType::DT_INT16] = (2 * 3 + 4 + 1);
+    ub_per_length[ge::DataType::DT_INT32] = (4 * 3 + 4 + 1);
     ub_per_length[ge::DataType::DT_INT64] = (4 * 3 + 2);
 
     if (board_cast) {

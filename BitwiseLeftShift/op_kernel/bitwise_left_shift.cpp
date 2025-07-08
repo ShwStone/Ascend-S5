@@ -42,6 +42,7 @@ template <> class KernelBitwiseLeftShift<int16_t> {
         pipe.InitBuffer(otherQue, BUFFER_NUM, tileLength * sizeof(T));
         pipe.InitBuffer(outQue, BUFFER_NUM, tileLength * sizeof(U));
         pipe.InitBuffer(cmpBuf, tileLength * sizeof(uint8_t));
+        pipe.InitBuffer(floatBuf, tileLength * sizeof(float));
 
         inputGM.SetGlobalBuffer((__gm__ U *)input + coreFormerLength,
                                 coreLength);
@@ -80,10 +81,12 @@ template <> class KernelBitwiseLeftShift<int16_t> {
         LocalTensor<T> otherLocal = otherQue.DeQue<T>();
         LocalTensor<U> outLocal = outQue.AllocTensor<U>();
         LocalTensor<uint8_t> cmp = cmpBuf.Get<uint8_t>();
+        LocalTensor<float> otherFloat = floatBuf.Get<float>();
+
+        Cast(otherFloat, otherLocal, RoundMode::CAST_NONE, currentLength);
 
         for (int64_t currentBit = 16; currentBit; currentBit >>= 1) {
-
-            CompareScalar(cmp, otherLocal, static_cast<T>(currentBit),
+            CompareScalar(cmp, otherFloat, static_cast<float>(currentBit),
                           CMPMODE::GE, currentLength);
 
             for (int64_t offset = 0; offset + lengthPerBlock <= currentLength;
@@ -110,8 +113,8 @@ template <> class KernelBitwiseLeftShift<int16_t> {
 
                 ShiftLeft(inputLocal[offset], inputLocal[offset],
                           static_cast<U>(currentBit), mask, 1, {1, 1, 8, 8});
-                Adds(otherLocal[offset], otherLocal[offset],
-                     static_cast<T>(-currentBit), mask, 1, {1, 1, 8, 8});
+                Adds(otherFloat[offset], otherFloat[offset],
+                     static_cast<float>(-currentBit), mask, 1, {1, 1, 8, 8});
             }
         }
 
@@ -137,7 +140,8 @@ template <> class KernelBitwiseLeftShift<int16_t> {
     GlobalTensor<U> outGM;
     TQue<QuePosition::VECIN, 1> inputQue, otherQue;
     TQue<QuePosition::VECOUT, 1> outQue;
-    TBuf<TPosition::VECCALC> cmpBuf;
+    // TODO: Can we use half?
+    TBuf<TPosition::VECCALC> cmpBuf, floatBuf;
 
     int64_t coreLength;
     int64_t tileNum;
@@ -175,6 +179,7 @@ template <> class KernelBitwiseLeftShift<int32_t> {
         pipe.InitBuffer(otherQue, BUFFER_NUM, tileLength * sizeof(T));
         pipe.InitBuffer(outQue, BUFFER_NUM, tileLength * sizeof(U));
         pipe.InitBuffer(cmpBuf, tileLength * sizeof(uint8_t));
+        pipe.InitBuffer(floatBuf, tileLength * sizeof(float));
 
         inputGM.SetGlobalBuffer((__gm__ U *)input + coreFormerLength,
                                 coreLength);
@@ -213,9 +218,12 @@ template <> class KernelBitwiseLeftShift<int32_t> {
         LocalTensor<T> otherLocal = otherQue.DeQue<T>();
         LocalTensor<U> outLocal = outQue.AllocTensor<U>();
         LocalTensor<uint8_t> cmp = cmpBuf.Get<uint8_t>();
+        LocalTensor<float> otherFloat = floatBuf.Get<float>();
+
+        Cast(otherFloat, otherLocal, RoundMode::CAST_NONE, currentLength);
 
         for (int64_t currentBit = 32; currentBit; currentBit >>= 1) {
-            CompareScalar(cmp, otherLocal, static_cast<T>(currentBit),
+            CompareScalar(cmp, otherFloat, static_cast<float>(currentBit),
                           CMPMODE::GE, currentLength);
 
             for (int64_t offset = 0; offset + lengthPerBlock <= currentLength;
@@ -235,8 +243,8 @@ template <> class KernelBitwiseLeftShift<int32_t> {
 
                 ShiftLeft(inputLocal[offset], inputLocal[offset],
                           static_cast<U>(currentBit), mask, 1, {1, 1, 8, 8});
-                Adds(otherLocal[offset], otherLocal[offset],
-                     static_cast<T>(-currentBit), mask, 1, {1, 1, 8, 8});
+                Adds(otherFloat[offset], otherFloat[offset],
+                     static_cast<float>(-currentBit), mask, 1, {1, 1, 8, 8});
 
             }
         }
@@ -263,7 +271,7 @@ template <> class KernelBitwiseLeftShift<int32_t> {
     GlobalTensor<U> outGM;
     TQue<QuePosition::VECIN, 1> inputQue, otherQue;
     TQue<QuePosition::VECOUT, 1> outQue;
-    TBuf<TPosition::VECCALC> cmpBuf;
+    TBuf<TPosition::VECCALC> cmpBuf, floatBuf;
 
     int64_t coreLength;
     int64_t tileNum;
