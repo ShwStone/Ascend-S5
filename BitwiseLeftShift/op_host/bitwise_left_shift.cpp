@@ -1,4 +1,4 @@
-#include "copysign_tiling.h"
+#include "bitwise_left_shift_tiling.h"
 #include "register/op_def_registry.h"
 #include "tiling/platform/platform_ascendc.h"
 
@@ -8,7 +8,7 @@ constexpr int64_t BUFFER_NUM(2);
 namespace optiling {
 static ge::graphStatus TilingFunc(gert::TilingContext *context) {
 
-    CopysignTilingData tiling;
+    BitwiseLeftShiftTilingData tiling;
 
     auto ascendcPlatform =
         platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
@@ -28,20 +28,20 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
     uint8_t board_cast = 0;
     int64_t out_dims[3];
 
-    for (int64_t i = 0; i < 3; i++) {
+    // for (int64_t i = 0; i < 3; i++) {
 
-        int64_t input_dim = 1, other_dim = 1, out_dim = 1;
-        if (i + input_dim_num - 4 >= 0)
-            input_dim = input_shape.GetDim(i + input_dim_num - 4);
-        if (i + other_dim_num - 4 >= 0)
-            other_dim = other_shape.GetDim(i + other_dim_num - 4);
-        if (i + out_dim_num - 4 >= 0)
-            out_dim = out_shape.GetDim(i + out_dim_num - 4);
+    //     int64_t input_dim = 1, other_dim = 1, out_dim = 1;
+    //     if (i + input_dim_num - 4 >= 0)
+    //         input_dim = input_shape.GetDim(i + input_dim_num - 4);
+    //     if (i + other_dim_num - 4 >= 0)
+    //         other_dim = other_shape.GetDim(i + other_dim_num - 4);
+    //     if (i + out_dim_num - 4 >= 0)
+    //         out_dim = out_shape.GetDim(i + out_dim_num - 4);
 
-        if (input_dim < out_dim) board_cast |= (uint8_t(1) << i);
-        if (other_dim < out_dim) board_cast |= (uint8_t(1) << (i + 3));
-        out_dims[i] = out_dim;
-    }
+    //     if (input_dim < out_dim) board_cast |= (uint8_t(1) << i);
+    //     if (other_dim < out_dim) board_cast |= (uint8_t(1) << (i + 3));
+    //     out_dims[i] = out_dim;
+    // }
 
     tiling.set_board_cast(board_cast);
 
@@ -57,9 +57,10 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ub_size);
 
     int64_t ub_per_length[ge::DataType::DT_MAX];
-    ub_per_length[ge::DataType::DT_FLOAT] = (4 * 3 + 1);
-    ub_per_length[ge::DataType::DT_FLOAT16] = (2 * 3 + 1);
-    ub_per_length[ge::DataType::DT_BF16] = (2 * 3 + 4 * 2 + 1);
+    ub_per_length[ge::DataType::DT_INT8] = (1 * 3 + 2 * 2 + 1);
+    ub_per_length[ge::DataType::DT_INT16] = (2 * 3 + 1);
+    ub_per_length[ge::DataType::DT_INT32] = (4 * 3 + 1);
+    ub_per_length[ge::DataType::DT_INT64] = (4 * 3 + 2);
 
     if (board_cast) {
 
@@ -118,29 +119,9 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
 
 namespace ge {
 static ge::graphStatus InferShape(gert::InferShapeContext *context) {
-    const gert::Shape *input_shape = context->GetInputShape(0);
-    const gert::Shape *other_shape = context->GetInputShape(1);
-    gert::Shape *out_shape = context->GetOutputShape(0);
-
-    // int64_t input_dim_num = input_shape->GetDimNum();
-    // int64_t other_dim_num = other_shape->GetDimNum();
-    // int64_t out_dim_num =
-    //     input_dim_num > other_dim_num ? input_dim_num : other_dim_num;
-
-    // out_shape->SetDimNum(out_dim_num);
-
-    // for (int64_t i = 0; i < out_dim_num; i++) {
-    //     int64_t input_dim = 1, other_dim = 1;
-    //     if (i < input_dim_num)
-    //         input_dim = input_shape->GetDim(input_dim_num - i - 1);
-    //     if (i < other_dim_num)
-    //         other_dim = other_shape->GetDim(other_dim_num - i - 1);
-    //     int64_t out_dim = input_dim > other_dim ? input_dim : other_dim;
-    //     out_shape->SetDim(out_dim_num - i - 1, out_dim);
-    // }
-
-    *out_shape = *input_shape;
-
+    const gert::Shape *x1_shape = context->GetInputShape(0);
+    gert::Shape *y_shape = context->GetOutputShape(0);
+    *y_shape = *x1_shape;
     return GRAPH_SUCCESS;
 }
 static ge::graphStatus InferDataType(gert::InferDataTypeContext *context) {
@@ -151,32 +132,37 @@ static ge::graphStatus InferDataType(gert::InferDataTypeContext *context) {
 } // namespace ge
 
 namespace ops {
-class Copysign : public OpDef {
+class BitwiseLeftShift : public OpDef {
   public:
-    explicit Copysign(const char *name) : OpDef(name) {
+    explicit BitwiseLeftShift(const char *name) : OpDef(name) {
         this->Input("input")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16})
-            .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
+            .DataType({ge::DT_INT8, ge::DT_INT16, ge::DT_INT32, ge::DT_INT64})
+            .Format(
+                {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
+            .UnknownShapeFormat(
+                {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         this->Input("other")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16})
-            .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
+            .DataType({ge::DT_INT8, ge::DT_INT16, ge::DT_INT32, ge::DT_INT64})
+            .Format(
+                {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
+            .UnknownShapeFormat(
+                {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
         this->Output("out")
             .ParamType(REQUIRED)
-            .DataType({ge::DT_FLOAT16, ge::DT_FLOAT, ge::DT_BF16})
-            .Format({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
-            .UnknownShapeFormat({ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
+            .DataType({ge::DT_INT8, ge::DT_INT16, ge::DT_INT32, ge::DT_INT64})
+            .Format(
+                {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND})
+            .UnknownShapeFormat(
+                {ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND, ge::FORMAT_ND});
 
         this->SetInferShape(ge::InferShape).SetInferDataType(ge::InferDataType);
 
         this->AICore().SetTiling(optiling::TilingFunc);
         this->AICore().AddConfig("ascend310b");
-        // this->AICore().AddConfig("ascend910b");
     }
 };
 
-OP_ADD(Copysign);
+OP_ADD(BitwiseLeftShift);
 } // namespace ops
