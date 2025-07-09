@@ -4,6 +4,7 @@
 
 constexpr int64_t BLOCK_SIZE(256);
 constexpr int64_t BUFFER_NUM(2);
+constexpr uint64_t PRESERVE_UB(8 * 1024);
 
 namespace optiling {
 static ge::graphStatus TilingFunc(gert::TilingContext *context) {
@@ -55,6 +56,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
 
     uint64_t ub_size;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ub_size);
+    ub_size -= PRESERVE_UB;
 
     int64_t ub_per_length[ge::DataType::DT_MAX];
     ub_per_length[ge::DataType::DT_FLOAT] = (4 * 3 + 1);

@@ -15,7 +15,7 @@ template <class T> class KernelBitwiseLeftShift {
 template <> class KernelBitwiseLeftShift<int16_t> {
     using T = int16_t;
     using U = uint16_t;
-    static constexpr int64_t lengthPerBlock = 256 / sizeof(T);
+    using F = half;
 
   public:
     __aicore__ inline KernelBitwiseLeftShift() {}
@@ -42,7 +42,6 @@ template <> class KernelBitwiseLeftShift<int16_t> {
         pipe.InitBuffer(otherQue, BUFFER_NUM, tileLength * sizeof(T));
         pipe.InitBuffer(outQue, BUFFER_NUM, tileLength * sizeof(U));
         pipe.InitBuffer(cmpBuf, tileLength * sizeof(uint8_t));
-        pipe.InitBuffer(floatBuf, tileLength * sizeof(float));
 
         inputGM.SetGlobalBuffer((__gm__ U *)input + coreFormerLength,
                                 coreLength);
@@ -81,44 +80,39 @@ template <> class KernelBitwiseLeftShift<int16_t> {
         LocalTensor<T> otherLocal = otherQue.DeQue<T>();
         LocalTensor<U> outLocal = outQue.AllocTensor<U>();
         LocalTensor<uint8_t> cmp = cmpBuf.Get<uint8_t>();
-        LocalTensor<float> otherFloat = floatBuf.Get<float>();
 
-        Cast(otherFloat, otherLocal, RoundMode::CAST_NONE, currentLength);
+        LocalTensor<F> inputF, outF, otherF;
+        LocalTensor<T> outT;
+        inputF.SetAddrWithOffset(inputLocal, 0);
+        outF.SetAddrWithOffset(outLocal, 0);
+        outT.SetAddrWithOffset(outLocal, 0);
+        otherF.SetAddrWithOffset(otherLocal, 0);
 
-        for (int64_t currentBit = 16; currentBit; currentBit >>= 1) {
-            CompareScalar(cmp, otherFloat, static_cast<float>(currentBit),
-                          CMPMODE::GE, currentLength);
+#define SEL_TT SELMODE::VSEL_TENSOR_TENSOR_MODE
+#define SCAST static_cast
+#define LEFT_SHIFT(b)                                                          \
+    {                                                                          \
+        Cast(outF, otherLocal, RoundMode::CAST_NONE, currentLength);           \
+        CompareScalar(cmp, outF, SCAST<F>((b)), CMPMODE::GE, currentLength);   \
+        ShiftLeft(outLocal, inputLocal, SCAST<U>((b)), currentLength);         \
+        Select(inputF, cmp, outF, inputF, SEL_TT, currentLength);              \
+        Adds(outT, otherLocal, SCAST<T>(-(b)), currentLength);                 \
+        Select(otherF, cmp, outF, otherF, SEL_TT, currentLength);              \
+    }
 
-            for (int64_t offset = 0; offset + lengthPerBlock <= currentLength;
-                 offset += lengthPerBlock) {
-                uint64_t mask[2];
-                LocalTensor<uint8_t> cmpCurrent = cmp[offset / 8];
+        LEFT_SHIFT(16);
+        LEFT_SHIFT(8);
+        LEFT_SHIFT(4);
+        LEFT_SHIFT(2);
 
-                mask[0] = static_cast<uint64_t>(cmpCurrent(0)) |
-                          (static_cast<uint64_t>(cmpCurrent(1)) << 8) |
-                          (static_cast<uint64_t>(cmpCurrent(2)) << 16) |
-                          (static_cast<uint64_t>(cmpCurrent(3)) << 24) |
-                          (static_cast<uint64_t>(cmpCurrent(4)) << 32) |
-                          (static_cast<uint64_t>(cmpCurrent(5)) << 40) |
-                          (static_cast<uint64_t>(cmpCurrent(6)) << 48) |
-                          (static_cast<uint64_t>(cmpCurrent(7)) << 56);
-                mask[1] = static_cast<uint64_t>(cmpCurrent(8)) |
-                          (static_cast<uint64_t>(cmpCurrent(9)) << 8) |
-                          (static_cast<uint64_t>(cmpCurrent(10)) << 16) |
-                          (static_cast<uint64_t>(cmpCurrent(11)) << 24) |
-                          (static_cast<uint64_t>(cmpCurrent(12)) << 32) |
-                          (static_cast<uint64_t>(cmpCurrent(13)) << 40) |
-                          (static_cast<uint64_t>(cmpCurrent(14)) << 48) |
-                          (static_cast<uint64_t>(cmpCurrent(15)) << 56);
+        Cast(outF, otherLocal, RoundMode::CAST_NONE, currentLength);
+        CompareScalar(cmp, outF, SCAST<F>(1), CMPMODE::GE, currentLength);
+        ShiftLeft(outLocal, inputLocal, SCAST<U>(1), currentLength);
+        Select(outF, cmp, outF, inputF, SEL_TT, currentLength);
 
-                ShiftLeft(inputLocal[offset], inputLocal[offset],
-                          static_cast<U>(currentBit), mask, 1, {1, 1, 8, 8});
-                Adds(otherFloat[offset], otherFloat[offset],
-                     static_cast<float>(-currentBit), mask, 1, {1, 1, 8, 8});
-            }
-        }
-
-        DataCopy(outLocal, inputLocal, currentLength);
+#undef SEL_TT
+#undef SCAST
+#undef LEFT_SHIFT
 
         outQue.EnQue<U>(outLocal);
         inputQue.FreeTensor(inputLocal);
@@ -140,8 +134,7 @@ template <> class KernelBitwiseLeftShift<int16_t> {
     GlobalTensor<U> outGM;
     TQue<QuePosition::VECIN, 1> inputQue, otherQue;
     TQue<QuePosition::VECOUT, 1> outQue;
-    // TODO: Can we use half?
-    TBuf<TPosition::VECCALC> cmpBuf, floatBuf;
+    TBuf<TPosition::VECCALC> cmpBuf;
 
     int64_t coreLength;
     int64_t tileNum;
@@ -152,7 +145,7 @@ template <> class KernelBitwiseLeftShift<int16_t> {
 template <> class KernelBitwiseLeftShift<int32_t> {
     using T = int32_t;
     using U = uint32_t;
-    static constexpr int64_t lengthPerBlock = 256 / sizeof(T);
+    using F = float;
 
   public:
     __aicore__ inline KernelBitwiseLeftShift() {}
@@ -179,7 +172,6 @@ template <> class KernelBitwiseLeftShift<int32_t> {
         pipe.InitBuffer(otherQue, BUFFER_NUM, tileLength * sizeof(T));
         pipe.InitBuffer(outQue, BUFFER_NUM, tileLength * sizeof(U));
         pipe.InitBuffer(cmpBuf, tileLength * sizeof(uint8_t));
-        pipe.InitBuffer(floatBuf, tileLength * sizeof(float));
 
         inputGM.SetGlobalBuffer((__gm__ U *)input + coreFormerLength,
                                 coreLength);
@@ -218,38 +210,40 @@ template <> class KernelBitwiseLeftShift<int32_t> {
         LocalTensor<T> otherLocal = otherQue.DeQue<T>();
         LocalTensor<U> outLocal = outQue.AllocTensor<U>();
         LocalTensor<uint8_t> cmp = cmpBuf.Get<uint8_t>();
-        LocalTensor<float> otherFloat = floatBuf.Get<float>();
 
-        Cast(otherFloat, otherLocal, RoundMode::CAST_NONE, currentLength);
+        LocalTensor<F> inputF, outF, otherF;
+        LocalTensor<T> outT;
+        inputF.SetAddrWithOffset(inputLocal, 0);
+        outF.SetAddrWithOffset(outLocal, 0);
+        outT.SetAddrWithOffset(outLocal, 0);
+        otherF.SetAddrWithOffset(otherLocal, 0);
 
-        for (int64_t currentBit = 32; currentBit; currentBit >>= 1) {
-            CompareScalar(cmp, otherFloat, static_cast<float>(currentBit),
-                          CMPMODE::GE, currentLength);
+#define SEL_TT SELMODE::VSEL_TENSOR_TENSOR_MODE
+#define SCAST static_cast
+#define LEFT_SHIFT(b)                                                          \
+    {                                                                          \
+        Cast(outF, otherLocal, RoundMode::CAST_NONE, currentLength);           \
+        CompareScalar(cmp, outF, SCAST<F>((b)), CMPMODE::GE, currentLength);   \
+        ShiftLeft(outLocal, inputLocal, SCAST<U>((b)), currentLength);         \
+        Select(inputF, cmp, outF, inputF, SEL_TT, currentLength);              \
+        Adds(outT, otherLocal, SCAST<T>(-(b)), currentLength);                 \
+        Select(otherF, cmp, outF, otherF, SEL_TT, currentLength);              \
+    }
 
-            for (int64_t offset = 0; offset + lengthPerBlock <= currentLength;
-                 offset += lengthPerBlock) {
-                uint64_t mask[2];
-                LocalTensor<uint8_t> cmpCurrent = cmp[offset / 8];
+        LEFT_SHIFT(32);
+        LEFT_SHIFT(16);
+        LEFT_SHIFT(8);
+        LEFT_SHIFT(4);
+        LEFT_SHIFT(2);
 
-                mask[0] = static_cast<uint64_t>(cmpCurrent(0)) |
-                          (static_cast<uint64_t>(cmpCurrent(1)) << 8) |
-                          (static_cast<uint64_t>(cmpCurrent(2)) << 16) |
-                          (static_cast<uint64_t>(cmpCurrent(3)) << 24) |
-                          (static_cast<uint64_t>(cmpCurrent(4)) << 32) |
-                          (static_cast<uint64_t>(cmpCurrent(5)) << 40) |
-                          (static_cast<uint64_t>(cmpCurrent(6)) << 48) |
-                          (static_cast<uint64_t>(cmpCurrent(7)) << 56);
-                mask[1] = 0;
+        Cast(outF, otherLocal, RoundMode::CAST_NONE, currentLength);
+        CompareScalar(cmp, outF, SCAST<F>(1), CMPMODE::GE, currentLength);
+        ShiftLeft(outLocal, inputLocal, SCAST<U>(1), currentLength);
+        Select(outF, cmp, outF, inputF, SEL_TT, currentLength);
 
-                ShiftLeft(inputLocal[offset], inputLocal[offset],
-                          static_cast<U>(currentBit), mask, 1, {1, 1, 8, 8});
-                Adds(otherFloat[offset], otherFloat[offset],
-                     static_cast<float>(-currentBit), mask, 1, {1, 1, 8, 8});
-
-            }
-        }
-
-        DataCopy(outLocal, inputLocal, currentLength);
+#undef SEL_TT
+#undef SCAST
+#undef LEFT_SHIFT
 
         outQue.EnQue<U>(outLocal);
         inputQue.FreeTensor(inputLocal);
@@ -271,7 +265,7 @@ template <> class KernelBitwiseLeftShift<int32_t> {
     GlobalTensor<U> outGM;
     TQue<QuePosition::VECIN, 1> inputQue, otherQue;
     TQue<QuePosition::VECOUT, 1> outQue;
-    TBuf<TPosition::VECCALC> cmpBuf, floatBuf;
+    TBuf<TPosition::VECCALC> cmpBuf;
 
     int64_t coreLength;
     int64_t tileNum;
@@ -471,3 +465,5 @@ bitwise_left_shift(GM_ADDR input, GM_ADDR other, GM_ADDR out, GM_ADDR workspace,
         op.Process();
     }
 }
+
+// 1100011101100111000100101010110011111100101100011010100001111

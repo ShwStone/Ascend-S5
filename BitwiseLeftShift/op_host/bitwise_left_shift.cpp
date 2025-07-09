@@ -4,7 +4,7 @@
 
 constexpr int64_t BLOCK_SIZE(256);
 constexpr int64_t BUFFER_NUM(2);
-
+constexpr uint64_t PRESERVE_UB(8 * 1024);
 namespace optiling {
 static ge::graphStatus TilingFunc(gert::TilingContext *context) {
 
@@ -13,7 +13,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
     auto ascendcPlatform =
         platform_ascendc::PlatformAscendC(context->GetPlatformInfo());
     auto coreNum = ascendcPlatform.GetCoreNum();
-    if (coreNum < 3) coreNum = 3;
+    // if (coreNum < 3) coreNum = 3;
 
     const gert::Shape input_shape =
         context->GetInputShape(0)->GetStorageShape();
@@ -55,11 +55,12 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
 
     uint64_t ub_size;
     ascendcPlatform.GetCoreMemSize(platform_ascendc::CoreMemType::UB, ub_size);
+    ub_size -= PRESERVE_UB;
 
     int64_t ub_per_length[ge::DataType::DT_MAX];
     ub_per_length[ge::DataType::DT_INT8] = (1 * 3 + 2 * 2 + 1);
-    ub_per_length[ge::DataType::DT_INT16] = (2 * 3 + 4 + 1);
-    ub_per_length[ge::DataType::DT_INT32] = (4 * 3 + 4 + 1);
+    ub_per_length[ge::DataType::DT_INT16] = (2 * 3 + 1);
+    ub_per_length[ge::DataType::DT_INT32] = (4 * 3 + 1);
     ub_per_length[ge::DataType::DT_INT64] = (4 * 3 + 2);
 
     if (board_cast) {
