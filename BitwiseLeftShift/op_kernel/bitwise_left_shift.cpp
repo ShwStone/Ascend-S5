@@ -81,32 +81,30 @@ template <> class KernelBitwiseLeftShift<int16_t> {
         LocalTensor<U> outLocal = outQue.AllocTensor<U>();
         LocalTensor<uint8_t> cmp = cmpBuf.Get<uint8_t>();
 
-        LocalTensor<F> inputF, outF, otherF;
-        LocalTensor<T> outT;
-        inputF.SetAddrWithOffset(inputLocal, 0);
-        outF.SetAddrWithOffset(outLocal, 0);
-        outT.SetAddrWithOffset(outLocal, 0);
-        otherF.SetAddrWithOffset(otherLocal, 0);
+        LocalTensor<F> inputF = inputLocal.ReinterpretCast<F>();
+        LocalTensor<F> outF = outLocal.ReinterpretCast<F>();
+        LocalTensor<F> otherF = otherLocal.ReinterpretCast<F>();
+        LocalTensor<T> outT = outLocal.ReinterpretCast<T>();
 
 #define SEL_TT SELMODE::VSEL_TENSOR_TENSOR_MODE
 #define SCAST static_cast
 #define LEFT_SHIFT(b)                                                          \
     {                                                                          \
-        Cast(outF, otherLocal, RoundMode::CAST_NONE, currentLength);           \
-        CompareScalar(cmp, outF, SCAST<F>((b)), CMPMODE::GE, currentLength);   \
+        CompareScalar(cmp, otherF, SCAST<F>((b)), CMPMODE::GE, currentLength); \
         ShiftLeft(outLocal, inputLocal, SCAST<U>((b)), currentLength);         \
         Select(inputF, cmp, outF, inputF, SEL_TT, currentLength);              \
-        Adds(outT, otherLocal, SCAST<T>(-(b)), currentLength);                 \
+        Adds(outF, otherF, SCAST<F>(-(b)), currentLength);                     \
         Select(otherF, cmp, outF, otherF, SEL_TT, currentLength);              \
     }
+
+        Cast(otherF, otherLocal, RoundMode::CAST_NONE, currentLength);
 
         LEFT_SHIFT(16);
         LEFT_SHIFT(8);
         LEFT_SHIFT(4);
         LEFT_SHIFT(2);
 
-        Cast(outF, otherLocal, RoundMode::CAST_NONE, currentLength);
-        CompareScalar(cmp, outF, SCAST<F>(1), CMPMODE::GE, currentLength);
+        CompareScalar(cmp, otherF, SCAST<F>(1), CMPMODE::GE, currentLength);
         ShiftLeft(outLocal, inputLocal, SCAST<U>(1), currentLength);
         Select(outF, cmp, outF, inputF, SEL_TT, currentLength);
 
@@ -211,24 +209,23 @@ template <> class KernelBitwiseLeftShift<int32_t> {
         LocalTensor<U> outLocal = outQue.AllocTensor<U>();
         LocalTensor<uint8_t> cmp = cmpBuf.Get<uint8_t>();
 
-        LocalTensor<F> inputF, outF, otherF;
-        LocalTensor<T> outT;
-        inputF.SetAddrWithOffset(inputLocal, 0);
-        outF.SetAddrWithOffset(outLocal, 0);
-        outT.SetAddrWithOffset(outLocal, 0);
-        otherF.SetAddrWithOffset(otherLocal, 0);
+        LocalTensor<F> inputF = inputLocal.ReinterpretCast<F>();
+        LocalTensor<F> outF = outLocal.ReinterpretCast<F>();
+        LocalTensor<F> otherF = otherLocal.ReinterpretCast<F>();
+        LocalTensor<T> outT = outLocal.ReinterpretCast<T>();
 
 #define SEL_TT SELMODE::VSEL_TENSOR_TENSOR_MODE
 #define SCAST static_cast
 #define LEFT_SHIFT(b)                                                          \
     {                                                                          \
-        Cast(outF, otherLocal, RoundMode::CAST_NONE, currentLength);           \
-        CompareScalar(cmp, outF, SCAST<F>((b)), CMPMODE::GE, currentLength);   \
+        CompareScalar(cmp, otherF, SCAST<F>((b)), CMPMODE::GE, currentLength); \
         ShiftLeft(outLocal, inputLocal, SCAST<U>((b)), currentLength);         \
         Select(inputF, cmp, outF, inputF, SEL_TT, currentLength);              \
-        Adds(outT, otherLocal, SCAST<T>(-(b)), currentLength);                 \
+        Adds(outF, otherF, SCAST<F>(-(b)), currentLength);                     \
         Select(otherF, cmp, outF, otherF, SEL_TT, currentLength);              \
     }
+
+        Cast(otherF, otherLocal, RoundMode::CAST_NONE, currentLength);
 
         LEFT_SHIFT(32);
         LEFT_SHIFT(16);
@@ -236,8 +233,7 @@ template <> class KernelBitwiseLeftShift<int32_t> {
         LEFT_SHIFT(4);
         LEFT_SHIFT(2);
 
-        Cast(outF, otherLocal, RoundMode::CAST_NONE, currentLength);
-        CompareScalar(cmp, outF, SCAST<F>(1), CMPMODE::GE, currentLength);
+        CompareScalar(cmp, otherF, SCAST<F>(1), CMPMODE::GE, currentLength);
         ShiftLeft(outLocal, inputLocal, SCAST<U>(1), currentLength);
         Select(outF, cmp, outF, inputF, SEL_TT, currentLength);
 
