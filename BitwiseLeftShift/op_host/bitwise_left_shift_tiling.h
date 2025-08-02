@@ -7,9 +7,6 @@ TILING_DATA_FIELD_DEF(int64_t, tail_length);
 TILING_DATA_FIELD_DEF(int64_t, former_num);
 TILING_DATA_FIELD_DEF(int64_t, tile_length);
 
-TILING_DATA_FIELD_DEF(int64_t, vector_length);
-TILING_DATA_FIELD_DEF(int64_t, align_vector_length);
-
 TILING_DATA_FIELD_DEF(uint8_t, board_cast);
 TILING_DATA_FIELD_DEF(int64_t, out_dim1);
 TILING_DATA_FIELD_DEF(int64_t, out_dim2);

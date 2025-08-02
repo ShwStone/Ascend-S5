@@ -28,20 +28,20 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
     uint8_t board_cast = 0;
     int64_t out_dims[3];
 
-    // for (int64_t i = 0; i < 3; i++) {
+    for (int64_t i = 0; i < 3; i++) {
 
-    //     int64_t input_dim = 1, other_dim = 1, out_dim = 1;
-    //     if (i + input_dim_num - 4 >= 0)
-    //         input_dim = input_shape.GetDim(i + input_dim_num - 4);
-    //     if (i + other_dim_num - 4 >= 0)
-    //         other_dim = other_shape.GetDim(i + other_dim_num - 4);
-    //     if (i + out_dim_num - 4 >= 0)
-    //         out_dim = out_shape.GetDim(i + out_dim_num - 4);
+        int64_t input_dim = 1, other_dim = 1, out_dim = 1;
+        if (i + input_dim_num - 3 >= 0)
+            input_dim = input_shape.GetDim(i + input_dim_num - 3);
+        if (i + other_dim_num - 3 >= 0)
+            other_dim = other_shape.GetDim(i + other_dim_num - 3);
+        if (i + out_dim_num - 3 >= 0)
+            out_dim = out_shape.GetDim(i + out_dim_num - 3);
 
-    //     if (input_dim < out_dim) board_cast |= (uint8_t(1) << i);
-    //     if (other_dim < out_dim) board_cast |= (uint8_t(1) << (i + 3));
-    //     out_dims[i] = out_dim;
-    // }
+        if (input_dim < out_dim) board_cast |= (uint8_t(1) << i);
+        if (other_dim < out_dim) board_cast |= (uint8_t(1) << (i + 3));
+        out_dims[i] = out_dim;
+    }
 
     tiling.set_board_cast(board_cast);
 
@@ -58,34 +58,27 @@ static ge::graphStatus TilingFunc(gert::TilingContext *context) {
     ub_size -= PRESERVE_UB;
 
     int64_t ub_per_length[ge::DataType::DT_MAX];
-    ub_per_length[ge::DataType::DT_INT8] = (1 * 3 + 2 * 2 + 1);
+    ub_per_length[ge::DataType::DT_INT8] = (1 * 3);
     ub_per_length[ge::DataType::DT_INT16] = (2 * 3 + 1);
     ub_per_length[ge::DataType::DT_INT32] = (4 * 3 + 1);
-    ub_per_length[ge::DataType::DT_INT64] = (4 * 3 + 2);
+    ub_per_length[ge::DataType::DT_INT64] = (8 * 3);
 
     if (board_cast) {
 
         int64_t length_per_block = BLOCK_SIZE / data_type_size;
-        int64_t vector_length = out_shape.GetDim(out_dim_num - 1);
-        int64_t block_per_vector =
-            (vector_length + length_per_block - 1) / length_per_block;
-        int64_t total_vector = total_length / vector_length;
+        int64_t total_block =
+            (total_length + length_per_block - 1) / length_per_block;
+        int64_t tail_block = total_block / coreNum;
+        int64_t former_block = tail_block + 1;
+        int64_t former_num = total_block % coreNum;
 
-        int64_t tail_vector = total_vector / coreNum;
-        int64_t former_vector = tail_vector + 1;
-        int64_t former_num = total_vector % coreNum;
+        int64_t ub_per_block = length_per_block * ub_per_length[data_type];
+        int64_t tile_block = ub_size / ub_per_block / BUFFER_NUM;
 
-        int64_t ub_per_vector =
-            block_per_vector * length_per_block * ub_per_length[data_type];
-        int64_t tile_vector = ub_size / ub_per_vector;
-
-        tiling.set_tile_length(tile_vector);
-        tiling.set_former_length(former_vector);
-        tiling.set_tail_length(tail_vector);
+        tiling.set_tile_length(tile_block * length_per_block);
+        tiling.set_former_length(former_block * length_per_block);
+        tiling.set_tail_length(tail_block * length_per_block);
         tiling.set_former_num(former_num);
-
-        tiling.set_vector_length(vector_length);
-        tiling.set_align_vector_length(block_per_vector * length_per_block);
 
         tiling.set_out_dim1(out_dims[0]);
         tiling.set_out_dim2(out_dims[1]);
@@ -161,9 +154,10 @@ class BitwiseLeftShift : public OpDef {
         this->SetInferShape(ge::InferShape).SetInferDataType(ge::InferDataType);
 
         this->AICore().SetTiling(optiling::TilingFunc);
-        this->AICore().AddConfig("ascend310b");
+        this->AICore().AddConfig("ascend910b");
     }
 };
 
 OP_ADD(BitwiseLeftShift);
 } // namespace ops
+
