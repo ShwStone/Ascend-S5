@@ -12,9 +12,7 @@
 
 Copysign是一个向量算子，输入两个向量，输出一个向量。公式如下：
 
-$$
-out_i = \begin{cases}|input_i|,& other_i \ge 0 \\ -|input_i|, & other_i\le 0\end{cases}
-$$
+![](images/copysign-formular.png)
 
 这里的等于零其实是浮点数特色：浮点数同时存在 `+0.0` 和 `-0.0` 两种零。可以在 python 中验证：
 
@@ -73,8 +71,8 @@ Cast(outLocal, otherFloat, RoundMode::CAST_TRUNC, currentLength);
 
 根据 [`Cast` 接口](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/82RC1/API/ascendcopapi/atlasascendc_api_07_0073.html)中的介绍，`bfloat16` 和 `half` 的内存排布如下：
 
-![bfloat16](./bfloat16.png)
-![half](./half.png)
+![bfloat16](images/bfloat16.png)
+![half](images/half.png)
 
 S 是符号位，E 是指数位，M 是数值位。可以总结出一下两点：
 
