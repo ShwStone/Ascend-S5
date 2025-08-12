@@ -1,7 +1,7 @@
 #include "kernel_operator.h"
 using namespace AscendC;
 
-constexpr int64_t BUFFER_NUM(2);
+constexpr int32_t BUFFER_NUM(2);
 
 template <class T> struct unsigned_type {
     using type = T;
@@ -20,9 +20,9 @@ template <class T> class KernelBitwiseLeftShift {
   public:
     __aicore__ inline KernelBitwiseLeftShift() {}
     __aicore__ inline void Init(GM_ADDR input, GM_ADDR other, GM_ADDR out,
-                                int64_t former_length, int64_t tail_length,
-                                int64_t former_num, int64_t tile_length) {
-        int64_t coreID = GetBlockIdx();
+                                int32_t former_length, int32_t tail_length,
+                                int32_t former_num, int32_t tile_length) {
+        int32_t coreID = GetBlockIdx();
         coreLength = (coreID < former_num) ? former_length : tail_length;
 
         tileLength = tile_length;
@@ -32,25 +32,42 @@ template <class T> class KernelBitwiseLeftShift {
         if (lastTileLength > 0) tileNum++;
         else lastTileLength = tileLength;
 
-        int64_t coreFormerLength =
+        loopLength = tileLength * GetBlockNum();
+
+        int32_t formerTileNum = former_length / tile_length;
+        int32_t formerLastTile = former_length - formerTileNum * tile_length;
+        int32_t tailTileNum = tail_length / tile_length;
+        int32_t tailLastTile = tail_length - tailTileNum * tile_length;
+
+        if (formerTileNum == tailTileNum) {
+            if (coreID < former_num) lastLoopLength = coreID * (formerLastTile - tileLength);
+            else lastLoopLength = former_num * (formerLastTile - tileLength) + (coreID - former_num) * (tailLastTile - tileLength);
+        } else {
+            if (coreID < former_num) lastLoopLength = coreID * (formerLastTile - tileLength);
+            else lastLoopLength = 0;
+        }
+        if (tileNum == 1) lastLoopLength = 0;
+
+        int32_t totalLength = former_length * former_num + tail_length * (GetBlockNum() - former_num);
+        int32_t beginLength = (tileNum > 1 ? coreID * tileLength : (
             (coreID < former_num)
                 ? (former_length * coreID)
                 : (tail_length * coreID +
-                   (former_length - tail_length) * former_num);
+                   (former_length - tail_length) * former_num)));
 
         pipe.InitBuffer(inputQue, BUFFER_NUM, tileLength * sizeof(U));
         pipe.InitBuffer(otherQue, BUFFER_NUM, tileLength * sizeof(U));
         pipe.InitBuffer(outQue, BUFFER_NUM, tileLength * sizeof(U));
 
-        inputGM.SetGlobalBuffer((__gm__ U *)input + coreFormerLength,
-                                coreLength);
-        otherGM.SetGlobalBuffer((__gm__ U *)other + coreFormerLength,
-                                coreLength);
-        outGM.SetGlobalBuffer((__gm__ U *)out + coreFormerLength, coreLength);
+        inputGM.SetGlobalBuffer((__gm__ U *)input + beginLength,
+                                totalLength);
+        otherGM.SetGlobalBuffer((__gm__ U *)other + beginLength,
+                                totalLength);
+        outGM.SetGlobalBuffer((__gm__ U *)out + beginLength, totalLength);
     }
     __aicore__ inline void Process() {
-        int64_t loopCount = tileNum;
-        for (int64_t i = 0; i < loopCount; i++) {
+        int32_t loopCount = tileNum;
+        for (int32_t i = 0; i < loopCount; i++) {
             CopyIn(i);
             Compute(i);
             CopyOut(i);
@@ -58,28 +75,31 @@ template <class T> class KernelBitwiseLeftShift {
     }
 
   private:
-    __aicore__ inline void CopyIn(int64_t progress) {
-        int64_t currentLength =
+    __aicore__ inline void CopyIn(int32_t progress) {
+        int32_t currentLength =
             (progress == tileNum - 1) ? lastTileLength : tileLength;
+
+        int32_t currentPosition = progress * loopLength;
+        if (progress == tileNum - 1) currentPosition += lastLoopLength;
 
         LocalTensor<U> inputLocal = inputQue.AllocTensor<U>();
         LocalTensor<U> otherLocal = otherQue.AllocTensor<U>();
 
-        DataCopy(inputLocal, inputGM[progress * tileLength], currentLength);
-        DataCopy(otherLocal, otherGM[progress * tileLength], currentLength);
+        DataCopy(inputLocal, inputGM[currentPosition], currentLength);
+        DataCopy(otherLocal, otherGM[currentPosition], currentLength);
 
         inputQue.EnQue(inputLocal);
         otherQue.EnQue(otherLocal);
     }
-    __aicore__ inline void Compute(int64_t progress) {
-        int64_t currentLength =
+    __aicore__ inline void Compute(int32_t progress) {
+        int32_t currentLength =
             (progress == tileNum - 1) ? lastTileLength : tileLength;
 
         LocalTensor<U> inputLocal = inputQue.DeQue<U>();
         LocalTensor<U> otherLocal = otherQue.DeQue<U>();
         LocalTensor<U> outLocal = outQue.AllocTensor<U>();
 
-        for (int64_t i = 0; i < currentLength; i++) {
+        for (int32_t i = 0; i < currentLength; i++) {
             U val = inputLocal(i), shift = otherLocal(i);
             outLocal(i) = (val << shift);
         }
@@ -88,12 +108,15 @@ template <class T> class KernelBitwiseLeftShift {
         inputQue.FreeTensor(inputLocal);
         otherQue.FreeTensor(otherLocal);
     }
-    __aicore__ inline void CopyOut(int64_t progress) {
-        int64_t currentLength =
+    __aicore__ inline void CopyOut(int32_t progress) {
+        int32_t currentLength =
             (progress == tileNum - 1) ? lastTileLength : tileLength;
 
+        int32_t currentPosition = progress * loopLength;
+        if (progress == tileNum - 1) currentPosition += lastLoopLength;
+
         LocalTensor<U> outLocal = outQue.DeQue<U>();
-        DataCopy(outGM[progress * tileLength], outLocal, currentLength);
+        DataCopy(outGM[currentPosition], outLocal, currentLength);
         outQue.FreeTensor(outLocal);
     }
 
@@ -105,10 +128,12 @@ template <class T> class KernelBitwiseLeftShift {
     TQue<QuePosition::VECIN, 1> inputQue, otherQue;
     TQue<QuePosition::VECOUT, 1> outQue;
 
-    int64_t coreLength;
-    int64_t tileNum;
-    int64_t tileLength;
-    int64_t lastTileLength;
+    int32_t coreLength;
+    int32_t tileNum;
+    int32_t tileLength;
+    int32_t lastTileLength;
+    int32_t loopLength;
+    int32_t lastLoopLength;
 };
 
 template <> class KernelBitwiseLeftShift<int16_t> {
@@ -119,9 +144,10 @@ template <> class KernelBitwiseLeftShift<int16_t> {
   public:
     __aicore__ inline KernelBitwiseLeftShift() {}
     __aicore__ inline void Init(GM_ADDR input, GM_ADDR other, GM_ADDR out,
-                                int64_t former_length, int64_t tail_length,
-                                int64_t former_num, int64_t tile_length) {
-        int64_t coreID = GetBlockIdx();
+                                int32_t former_length, int32_t tail_length,
+                                int32_t former_num, int32_t tile_length) {
+        int32_t coreID = GetBlockIdx();
+
         coreLength = (coreID < former_num) ? former_length : tail_length;
 
         tileLength = tile_length;
@@ -131,26 +157,43 @@ template <> class KernelBitwiseLeftShift<int16_t> {
         if (lastTileLength > 0) tileNum++;
         else lastTileLength = tileLength;
 
-        int64_t coreFormerLength =
+        loopLength = tileLength * GetBlockNum();
+
+        int32_t formerTileNum = former_length / tile_length;
+        int32_t formerLastTile = former_length - formerTileNum * tile_length;
+        int32_t tailTileNum = tail_length / tile_length;
+        int32_t tailLastTile = tail_length - tailTileNum * tile_length;
+
+        if (formerTileNum == tailTileNum) {
+            if (coreID < former_num) lastLoopLength = coreID * (formerLastTile - tileLength);
+            else lastLoopLength = former_num * (formerLastTile - tileLength) + (coreID - former_num) * (tailLastTile - tileLength);
+        } else {
+            if (coreID < former_num) lastLoopLength = coreID * (formerLastTile - tileLength);
+            else lastLoopLength = 0;
+        }
+        if (tileNum == 1) lastLoopLength = 0;
+
+        int32_t totalLength = former_length * former_num + tail_length * (GetBlockNum() - former_num);
+        int32_t beginLength = (tileNum > 1 ? coreID * tileLength : (
             (coreID < former_num)
                 ? (former_length * coreID)
                 : (tail_length * coreID +
-                   (former_length - tail_length) * former_num);
+                   (former_length - tail_length) * former_num)));
 
         pipe.InitBuffer(inputQue, BUFFER_NUM, tileLength * sizeof(U));
         pipe.InitBuffer(otherQue, BUFFER_NUM, tileLength * sizeof(T));
         pipe.InitBuffer(outQue, BUFFER_NUM, tileLength * sizeof(U));
         pipe.InitBuffer(cmpBuf, tileLength * sizeof(uint8_t));
 
-        inputGM.SetGlobalBuffer((__gm__ U *)input + coreFormerLength,
-                                coreLength);
-        otherGM.SetGlobalBuffer((__gm__ T *)other + coreFormerLength,
-                                coreLength);
-        outGM.SetGlobalBuffer((__gm__ U *)out + coreFormerLength, coreLength);
+        inputGM.SetGlobalBuffer((__gm__ U *)input + beginLength,
+                                totalLength);
+        otherGM.SetGlobalBuffer((__gm__ T *)other + beginLength,
+                                totalLength);
+        outGM.SetGlobalBuffer((__gm__ U *)out + beginLength, totalLength);
     }
     __aicore__ inline void Process() {
-        int64_t loopCount = tileNum;
-        for (int64_t i = 0; i < loopCount; i++) {
+        int32_t loopCount = tileNum;
+        for (int32_t i = 0; i < loopCount; i++) {
             CopyIn(i);
             Compute(i);
             CopyOut(i);
@@ -158,21 +201,24 @@ template <> class KernelBitwiseLeftShift<int16_t> {
     }
 
   private:
-    __aicore__ inline void CopyIn(int64_t progress) {
-        int64_t currentLength =
+    __aicore__ inline void CopyIn(int32_t progress) {
+        int32_t currentLength =
             (progress == tileNum - 1) ? lastTileLength : tileLength;
+
+        int32_t currentPosition = progress * loopLength;
+        if (progress == tileNum - 1) currentPosition += lastLoopLength;
 
         LocalTensor<U> inputLocal = inputQue.AllocTensor<U>();
         LocalTensor<T> otherLocal = otherQue.AllocTensor<T>();
 
-        DataCopy(inputLocal, inputGM[progress * tileLength], currentLength);
-        DataCopy(otherLocal, otherGM[progress * tileLength], currentLength);
+        DataCopy(inputLocal, inputGM[currentPosition], currentLength);
+        DataCopy(otherLocal, otherGM[currentPosition], currentLength);
 
         inputQue.EnQue(inputLocal);
         otherQue.EnQue(otherLocal);
     }
-    __aicore__ inline void Compute(int64_t progress) {
-        int64_t currentLength =
+    __aicore__ inline void Compute(int32_t progress) {
+        int32_t currentLength =
             (progress == tileNum - 1) ? lastTileLength : tileLength;
 
         LocalTensor<U> inputLocal = inputQue.DeQue<U>();
@@ -198,7 +244,6 @@ template <> class KernelBitwiseLeftShift<int16_t> {
 
         Cast(otherF, otherLocal, RoundMode::CAST_NONE, currentLength);
 
-        LEFT_SHIFT(16);
         LEFT_SHIFT(8);
         LEFT_SHIFT(4);
         LEFT_SHIFT(2);
@@ -215,12 +260,15 @@ template <> class KernelBitwiseLeftShift<int16_t> {
         inputQue.FreeTensor(inputLocal);
         otherQue.FreeTensor(otherLocal);
     }
-    __aicore__ inline void CopyOut(int64_t progress) {
-        int64_t currentLength =
+    __aicore__ inline void CopyOut(int32_t progress) {
+        int32_t currentLength =
             (progress == tileNum - 1) ? lastTileLength : tileLength;
 
+        int32_t currentPosition = progress * loopLength;
+        if (progress == tileNum - 1) currentPosition += lastLoopLength;
+
         LocalTensor<U> outLocal = outQue.DeQue<U>();
-        DataCopy(outGM[progress * tileLength], outLocal, currentLength);
+        DataCopy(outGM[currentPosition], outLocal, currentLength);
         outQue.FreeTensor(outLocal);
     }
 
@@ -233,10 +281,12 @@ template <> class KernelBitwiseLeftShift<int16_t> {
     TQue<QuePosition::VECOUT, 1> outQue;
     TBuf<TPosition::VECCALC> cmpBuf;
 
-    int64_t coreLength;
-    int64_t tileNum;
-    int64_t tileLength;
-    int64_t lastTileLength;
+    int32_t coreLength;
+    int32_t tileNum;
+    int32_t tileLength;
+    int32_t lastTileLength;
+    int32_t loopLength;
+    int32_t lastLoopLength;
 };
 
 template <> class KernelBitwiseLeftShift<int32_t> {
@@ -247,9 +297,10 @@ template <> class KernelBitwiseLeftShift<int32_t> {
   public:
     __aicore__ inline KernelBitwiseLeftShift() {}
     __aicore__ inline void Init(GM_ADDR input, GM_ADDR other, GM_ADDR out,
-                                int64_t former_length, int64_t tail_length,
-                                int64_t former_num, int64_t tile_length) {
-        int64_t coreID = GetBlockIdx();
+                                int32_t former_length, int32_t tail_length,
+                                int32_t former_num, int32_t tile_length) {
+        int32_t coreID = GetBlockIdx();
+
         coreLength = (coreID < former_num) ? former_length : tail_length;
 
         tileLength = tile_length;
@@ -259,26 +310,43 @@ template <> class KernelBitwiseLeftShift<int32_t> {
         if (lastTileLength > 0) tileNum++;
         else lastTileLength = tileLength;
 
-        int64_t coreFormerLength =
+        loopLength = tileLength * GetBlockNum();
+
+        int32_t formerTileNum = former_length / tile_length;
+        int32_t formerLastTile = former_length - formerTileNum * tile_length;
+        int32_t tailTileNum = tail_length / tile_length;
+        int32_t tailLastTile = tail_length - tailTileNum * tile_length;
+
+        if (formerTileNum == tailTileNum) {
+            if (coreID < former_num) lastLoopLength = coreID * (formerLastTile - tileLength);
+            else lastLoopLength = former_num * (formerLastTile - tileLength) + (coreID - former_num) * (tailLastTile - tileLength);
+        } else {
+            if (coreID < former_num) lastLoopLength = coreID * (formerLastTile - tileLength);
+            else lastLoopLength = 0;
+        }
+        if (tileNum == 1) lastLoopLength = 0;
+
+        int32_t totalLength = former_length * former_num + tail_length * (GetBlockNum() - former_num);
+        int32_t beginLength = (tileNum > 1 ? coreID * tileLength : (
             (coreID < former_num)
                 ? (former_length * coreID)
                 : (tail_length * coreID +
-                   (former_length - tail_length) * former_num);
+                   (former_length - tail_length) * former_num)));
 
         pipe.InitBuffer(inputQue, BUFFER_NUM, tileLength * sizeof(U));
         pipe.InitBuffer(otherQue, BUFFER_NUM, tileLength * sizeof(T));
         pipe.InitBuffer(outQue, BUFFER_NUM, tileLength * sizeof(U));
         pipe.InitBuffer(cmpBuf, tileLength * sizeof(uint8_t));
 
-        inputGM.SetGlobalBuffer((__gm__ U *)input + coreFormerLength,
-                                coreLength);
-        otherGM.SetGlobalBuffer((__gm__ T *)other + coreFormerLength,
-                                coreLength);
-        outGM.SetGlobalBuffer((__gm__ U *)out + coreFormerLength, coreLength);
+        inputGM.SetGlobalBuffer((__gm__ U *)input + beginLength,
+                                totalLength);
+        otherGM.SetGlobalBuffer((__gm__ T *)other + beginLength,
+                                totalLength);
+        outGM.SetGlobalBuffer((__gm__ U *)out + beginLength, totalLength);
     }
     __aicore__ inline void Process() {
-        int64_t loopCount = tileNum;
-        for (int64_t i = 0; i < loopCount; i++) {
+        int32_t loopCount = tileNum;
+        for (int32_t i = 0; i < loopCount; i++) {
             CopyIn(i);
             Compute(i);
             CopyOut(i);
@@ -286,21 +354,24 @@ template <> class KernelBitwiseLeftShift<int32_t> {
     }
 
   private:
-    __aicore__ inline void CopyIn(int64_t progress) {
-        int64_t currentLength =
+    __aicore__ inline void CopyIn(int32_t progress) {
+        int32_t currentLength =
             (progress == tileNum - 1) ? lastTileLength : tileLength;
+
+        int32_t currentPosition = progress * loopLength;
+        if (progress == tileNum - 1) currentPosition += lastLoopLength;
 
         LocalTensor<U> inputLocal = inputQue.AllocTensor<U>();
         LocalTensor<T> otherLocal = otherQue.AllocTensor<T>();
 
-        DataCopy(inputLocal, inputGM[progress * tileLength], currentLength);
-        DataCopy(otherLocal, otherGM[progress * tileLength], currentLength);
+        DataCopy(inputLocal, inputGM[currentPosition], currentLength);
+        DataCopy(otherLocal, otherGM[currentPosition], currentLength);
 
         inputQue.EnQue(inputLocal);
         otherQue.EnQue(otherLocal);
     }
-    __aicore__ inline void Compute(int64_t progress) {
-        int64_t currentLength =
+    __aicore__ inline void Compute(int32_t progress) {
+        int32_t currentLength =
             (progress == tileNum - 1) ? lastTileLength : tileLength;
 
         LocalTensor<U> inputLocal = inputQue.DeQue<U>();
@@ -326,7 +397,6 @@ template <> class KernelBitwiseLeftShift<int32_t> {
 
         Cast(otherF, otherLocal, RoundMode::CAST_NONE, currentLength);
 
-        LEFT_SHIFT(32);
         LEFT_SHIFT(16);
         LEFT_SHIFT(8);
         LEFT_SHIFT(4);
@@ -344,12 +414,15 @@ template <> class KernelBitwiseLeftShift<int32_t> {
         inputQue.FreeTensor(inputLocal);
         otherQue.FreeTensor(otherLocal);
     }
-    __aicore__ inline void CopyOut(int64_t progress) {
-        int64_t currentLength =
+    __aicore__ inline void CopyOut(int32_t progress) {
+        int32_t currentLength =
             (progress == tileNum - 1) ? lastTileLength : tileLength;
 
+        int32_t currentPosition = progress * loopLength;
+        if (progress == tileNum - 1) currentPosition += lastLoopLength;
+
         LocalTensor<U> outLocal = outQue.DeQue<U>();
-        DataCopy(outGM[progress * tileLength], outLocal, currentLength);
+        DataCopy(outGM[currentPosition], outLocal, currentLength);
         outQue.FreeTensor(outLocal);
     }
 
@@ -362,10 +435,12 @@ template <> class KernelBitwiseLeftShift<int32_t> {
     TQue<QuePosition::VECOUT, 1> outQue;
     TBuf<TPosition::VECCALC> cmpBuf;
 
-    int64_t coreLength;
-    int64_t tileNum;
-    int64_t tileLength;
-    int64_t lastTileLength;
+    int32_t coreLength;
+    int32_t tileNum;
+    int32_t tileLength;
+    int32_t lastTileLength;
+    int32_t loopLength;
+    int32_t lastLoopLength;
 };
 
 template <class T> class KernelBitwiseLeftShiftBoardCast {
@@ -373,12 +448,12 @@ template <class T> class KernelBitwiseLeftShiftBoardCast {
   public:
     __aicore__ inline KernelBitwiseLeftShiftBoardCast() {}
     __aicore__ inline void Init(GM_ADDR input, GM_ADDR other, GM_ADDR out,
-                                int64_t former_length, int64_t tail_length,
-                                int64_t former_num, int64_t tile_length,
-                                uint8_t board_cast, int64_t out_dim1,
-                                int64_t out_dim2, int64_t out_dim3) {
+                                int32_t former_length, int32_t tail_length,
+                                int32_t former_num, int32_t tile_length,
+                                uint8_t board_cast, int32_t out_dim1,
+                                int32_t out_dim2, int32_t out_dim3) {
 
-        int64_t coreID = GetBlockIdx();
+        int32_t coreID = GetBlockIdx();
         coreLength = (coreID < former_num) ? former_length : tail_length;
 
         tileLength = tile_length;
@@ -425,8 +500,8 @@ template <class T> class KernelBitwiseLeftShiftBoardCast {
                               outDim1 * outDim2 * outDim3);
     }
     __aicore__ inline void Process() {
-        int64_t loopCount = tileNum;
-        for (int64_t i = 0; i < loopCount; i++) {
+        int32_t loopCount = tileNum;
+        for (int32_t i = 0; i < loopCount; i++) {
             CopyIn(i);
             Compute(i);
             CopyOut(i);
@@ -434,9 +509,9 @@ template <class T> class KernelBitwiseLeftShiftBoardCast {
     }
 
   private:
-    __aicore__ inline void CopyIn(int64_t progress) {
-        int64_t beginLength = progress * tileLength + coreFormerLength;
-        int64_t currentLength =
+    __aicore__ inline void CopyIn(int32_t progress) {
+        int32_t beginLength = progress * tileLength + coreFormerLength;
+        int32_t currentLength =
             (progress == tileNum - 1) ? lastTileLength : tileLength;
 
         LocalTensor<U> inputLocal = inputQue.AllocTensor<U>();
@@ -444,12 +519,12 @@ template <class T> class KernelBitwiseLeftShiftBoardCast {
 
         DataCopy(inputLocal, inputGM[beginLength], currentLength);
 
-        for (int64_t i = 0; i < currentLength; i++) {
-            int64_t dim1 = (i + beginLength) / (outDim2 * outDim3);
-            int64_t dim2 = (i + beginLength) / outDim3 % outDim2;
-            int64_t dim3 = (i + beginLength) % outDim3;
+        for (int32_t i = 0; i < currentLength; i++) {
+            int32_t dim1 = (i + beginLength) / (outDim2 * outDim3);
+            int32_t dim2 = (i + beginLength) / outDim3 % outDim2;
+            int32_t dim3 = (i + beginLength) % outDim3;
 
-            int64_t otherID = dim1 * otherStride1 * otherDim2 * otherDim3 +
+            int32_t otherID = dim1 * otherStride1 * otherDim2 * otherDim3 +
                               dim2 * otherStride2 * otherDim3 +
                               dim3 * otherStride3;
             otherLocal(i) = otherGM(otherID);
@@ -458,15 +533,15 @@ template <class T> class KernelBitwiseLeftShiftBoardCast {
         inputQue.EnQue(inputLocal);
         otherQue.EnQue(otherLocal);
     }
-    __aicore__ inline void Compute(int64_t progress) {
-        int64_t currentLength =
+    __aicore__ inline void Compute(int32_t progress) {
+        int32_t currentLength =
             (progress == tileNum - 1) ? lastTileLength : tileLength;
 
         LocalTensor<U> inputLocal = inputQue.DeQue<U>();
         LocalTensor<U> otherLocal = otherQue.DeQue<U>();
         LocalTensor<U> outLocal = outQue.AllocTensor<U>();
 
-        for (int64_t i = 0; i < currentLength; i++) {
+        for (int32_t i = 0; i < currentLength; i++) {
             U val = inputLocal(i), shift = otherLocal(i);
             outLocal(i) = (val << shift);
         }
@@ -475,9 +550,9 @@ template <class T> class KernelBitwiseLeftShiftBoardCast {
         inputQue.FreeTensor(inputLocal);
         otherQue.FreeTensor(otherLocal);
     }
-    __aicore__ inline void CopyOut(int64_t progress) {
-        int64_t beginLength = progress * tileLength + coreFormerLength;
-        int64_t currentLength =
+    __aicore__ inline void CopyOut(int32_t progress) {
+        int32_t beginLength = progress * tileLength + coreFormerLength;
+        int32_t currentLength =
             (progress == tileNum - 1) ? lastTileLength : tileLength;
 
         LocalTensor<U> outLocal = outQue.DeQue<U>();
@@ -496,17 +571,17 @@ template <class T> class KernelBitwiseLeftShiftBoardCast {
     TQue<QuePosition::VECOUT, 1> outQue;
     TBuf<TPosition::VECCALC> cmpBuf;
 
-    int64_t coreLength;
-    int64_t coreFormerLength;
-    int64_t tileNum;
-    int64_t tileLength;
-    int64_t lastTileLength;
+    int32_t coreLength;
+    int32_t coreFormerLength;
+    int32_t tileNum;
+    int32_t tileLength;
+    int32_t lastTileLength;
 
     int8_t inputStride1, inputStride2, inputStride3;
     int8_t otherStride1, otherStride2, otherStride3;
-    int64_t outDim1, outDim2, outDim3;
-    int64_t inputDim1, inputDim2, inputDim3;
-    int64_t otherDim1, otherDim2, otherDim3;
+    int32_t outDim1, outDim2, outDim3;
+    int32_t inputDim1, inputDim2, inputDim3;
+    int32_t otherDim1, otherDim2, otherDim3;
 };
 
 extern "C" __global__ __aicore__ void
